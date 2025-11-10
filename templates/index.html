@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Consolidator - รวมและจัดเรียง PDF</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: #f8f9ff;
+        }
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: translateY(-2px);
+        }
+        
+        .upload-area.dragover {
+            border-color: #28a745;
+            background: #e8f5e9;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .file-label {
+            display: block;
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .file-info {
+            color: #999;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.2s ease;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .selected-files {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f2ff;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .selected-files.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; max-height: 0; }
+            to { opacity: 1; max-height: 500px; }
+        }
+        
+        .file-list {
+            list-style: none;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .file-list li {
+            padding: 8px;
+            background: white;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .file-size {
+            color: #999;
+            font-size: 12px;
+        }
+        
+        .features {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .features h3 {
+            color: #667eea;
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .feature-list {
+            list-style: none;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .feature-list li {
+            font-size: 14px;
+            color: #666;
+            padding: 8px;
+            background: #f8f9ff;
+            border-radius: 5px;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 13px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 PDF Consolidator</h1>
+        <p class="subtitle">
+            รวมและจัดเรียง PDF ตาม Order ID และ SKU<br>
+            รองรับไฟล์ขนาดใหญ่ถึง 200+ หน้า
+        </p>
+        
+        <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <label class="file-label">คลิกเพื่อเลือกไฟล์ PDF</label>
+                <p class="file-info">หรือลากไฟล์มาวางที่นี่<br>รองรับหลายไฟล์พร้อมกัน (สูงสุด 50MB)</p>
+                <input type="file" name="pdf_files" id="pdf_files" accept=".pdf" multiple>
+            </div>
+            
+            <div class="selected-files" id="selectedFiles">
+                <strong>📋 ไฟล์ที่เลือก:</strong>
+                <ul class="file-list" id="fileList"></ul>
+            </div>
+            
+            <div class="warning">
+                ⚠️ โปรดรอสักครู่หลังกดอัพโหลด การประมวลผลอาจใช้เวลา 2-5 นาที
+            </div>
+            
+            <button type="submit" id="submitBtn">🚀 อัพโหลดและประมวลผล</button>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 10px; color: #667eea;">⏳ กำลังประมวลผล...</p>
+            </div>
+        </form>
+        
+        <div class="features">
+            <h3>✨ ความสามารถ</h3>
+            <ul class="feature-list">
+                <li>📊 แยกตาม Order ID</li>
+                <li>🏷️ จัดกลุ่มตาม SKU</li>
+                <li>📦 รวมไฟล์อัตโนมัติ</li>
+                <li>⚡ ประหยัด RAM</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('pdf_files');
+        const uploadArea = document.getElementById('uploadArea');
+        const selectedFiles = document.getElementById('selectedFiles');
+        const fileList = document.getElementById('fileList');
+        const submitBtn = document.getElementById('submitBtn');
+        const uploadForm = document.getElementById('uploadForm');
+        const loading = document.getElementById('loading');
+
+        // คลิกที่ upload area เพื่อเลือกไฟล์
+        uploadArea.addEventListener('click', function() {
+            fileInput.click();
+        });
+
+        // แสดงไฟล์ที่เลือก
+        fileInput.addEventListener('change', function() {
+            displayFiles(this.files);
+        });
+
+        // Drag and Drop
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            fileInput.files = files;
+            displayFiles(files);
+        });
+
+        function displayFiles(files) {
+            fileList.innerHTML = '';
+            
+            if (files.length > 0) {
+                selectedFiles.classList.add('show');
+                
+                let totalSize = 0;
+                Array.from(files).forEach(file => {
+                    const li = document.createElement('li');
+                    const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+                    totalSize += file.size;
+                    
+                    li.innerHTML = `
+                        <span>📄 ${file.name}</span>
+                        <span class="file-size">${sizeInMB} MB</span>
+                    `;
+                    fileList.appendChild(li);
+                });
+                
+                const totalSizeInMB = (totalSize / (1024 * 1024)).toFixed(2);
+                submitBtn.textContent = `🚀 อัพโหลด ${files.length} ไฟล์ (${totalSizeInMB} MB)`;
+                
+                // ตรวจสอบขนาดไฟล์
+                if (totalSize > 50 * 1024 * 1024) {
+                    alert('❌ ขนาดไฟล์รวมเกิน 50MB กรุณาลดจำนวนไฟล์');
+                    submitBtn.disabled = true;
+                } else {
+                    submitBtn.disabled = false;
+                }
+            } else {
+                selectedFiles.classList.remove('show');
+                submitBtn.textContent = '🚀 อัพโหลดและประมวลผล';
+            }
+        }
+
+        // ส่งฟอร์ม
+        uploadForm.addEventListener('submit', function(e) {
+            if (fileInput.files.length === 0) {
+                e.preventDefault();
+                alert('❌ กรุณาเลือกไฟล์ก่อน');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ กำลังอัพโหลด...';
+            loading.classList.add('show');
+            uploadArea.style.pointerEvents = 'none';
+            uploadArea.style.opacity = '0.5';
+        });
+
+        // ป้องกันการปิดหน้าต่างระหว่างอัพโหลด
+        window.addEventListener('beforeunload', function(e) {
+            if (submitBtn.disabled && loading.classList.contains('show')) {
+                e.preventDefault();
+                e.returnValue = '';
+                return 'กำลังประมวลผลอยู่ คุณแน่ใจหรือไม่ที่จะออกจากหน้านี้?';
+            }
+        });
+    </script>
+</body>
+</html>
+```
+
+---
+
+## 📋 สรุปไฟล์ทั้งหมด (7 ไฟล์)
+
+### ✅ ไฟล์ที่ต้องสร้าง:
+
+1. **`app.py`** - โค้ดหลักของแอพพลิเคชัน
+2. **`requirements.txt`** - รายการ Python packages
+3. **`.gitignore`** - ไฟล์ที่ไม่ต้อง commit
+4. **`.python-version`** - เวอร์ชัน Python
+5. **`runtime.txt`** - เวอร์ชัน Python สำหรับ Render
+6. **`render.yaml`** - การตั้งค่า Render
+7. **`templates/index.html`** - หน้าเว็บหลัก
+
+---
+
+## 🚀 วิธี Deploy บน Render.com (ทีละขั้นตอน)
+
+### 📝 **ขั้นตอนที่ 1: สร้าง Repository บน GitHub**
+
+1. ไปที่ [github.com](https://github.com) และ login
+2. คลิก **+** (มุมขวาบน) → **New repository**
+3. ตั้งชื่อ: `pdf-consolidator`
+4. เลือก **Public**
+5. **อย่า** เลือก "Add README"
+6. คลิก **Create repository**
+
+---
+
+### 📂 **ขั้นตอนที่ 2: สร้างไฟล์บน GitHub Web**
+
+#### 2.1 สร้าง `app.py`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `app.py`
+3. คัดลอกโค้ด `app.py` ด้านบนทั้งหมดวาง
+4. คลิก **Commit new file** (ล่างสุด)
+
+#### 2.2 สร้าง `requirements.txt`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `requirements.txt`
+3. คัดลอกข้อความใน `requirements.txt` วาง
+4. คลิก **Commit new file**
+
+#### 2.3 สร้าง `.gitignore`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `.gitignore`
+3. คัดลอกข้อความใน `.gitignore` วาง
+4. คลิก **Commit new file**
+
+#### 2.4 สร้าง `.python-version`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `.python-version`
+3. พิมพ์: `3.11`
+4. คลิก **Commit new file**
+
+#### 2.5 สร้าง `runtime.txt`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `runtime.txt`
+3. พิมพ์: `python-3.11.0`
+4. คลิก **Commit new file**
+
+#### 2.6 สร้าง `render.yaml`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `render.yaml`
+3. คัดลอกข้อความใน `render.yaml` วาง
+4. คลิก **Commit new file**
+
+#### 2.7 สร้างโฟลเดอร์ `templates` และไฟล์ `index.html`
+1. คลิก **Add file** → **Create new file**
+2. ตั้งชื่อไฟล์: `templates/index.html` (พิมพ์ตรงนี้จะสร้างโฟลเดอร์อัตโนมัติ)
+3. คัดลอกโค้ด `index.html` ทั้งหมดวาง
+4. คลิก **Commit new file**
+
+---
+
+### 🌐 **ขั้นตอนที่ 3: Deploy บน Render.com**
+
+1. ไปที่ [render.com](https://render.com)
+2. คลิก **Sign Up** (หรือ **Log In** ถ้ามีบัญชีแล้ว)
+3. เลือก **Sign up with GitHub**
+4. อนุญาตให้ Render เข้าถึง GitHub
+
+#### 3.1 สร้าง Web Service
+1. ที่ Dashboard คลิก **New +** (มุมขวาบน)
+2. เลือก **Web Service**
+3. คลิก **Build and deploy from a Git repository**
+4. คลิก **Next**
+
+#### 3.2 เชื่อมต่อ Repository
+1. ค้นหา repository: `pdf-consolidator`
+2. คลิก **Connect**
+
+#### 3.3 ตั้งค่า Service
+```
+Name: pdf-consolidator (หรือชื่อที่คุณต้องการ)
+Region: Singapore (ใกล้ไทยที่สุด)
+Branch: main
+Runtime: Python 3
+Build Command: pip install --upgrade pip && pip install -r requirements.txt
+Start Command: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --threads 1
+```
+
+#### 3.4 เลือก Plan
+1. เลื่อนลงมาหา **Plan**
+2. เลือก **Free**
+3. คลิก **Create Web Service**
+
+---
+
+### ⏳ **ขั้นตอนที่ 4: รอการ Deploy**
+
+1. Render จะเริ่ม build (ประมาณ 3-5 นาที)
+2. ดูสถานะที่แถบ **Logs**
+3. เมื่อเห็น:
+```
+   ==> Your service is live 🎉
+   https://pdf-consolidator-xxxx.onrender.com
+```
+4. **เสร็จสิ้น!** คลิก URL เพื่อเข้าใช้งาน
+
+---
+
+## 🎯 URL ที่ได้
+
+คุณจะได้ URL แบบนี้:
+```
+https://pdf-consolidator-xxxx.onrender.com
+```
+
+---
+
+## ✅ การทดสอบ
+
+### 1. เข้า URL ที่ได้
+- ควรเห็นหน้าเว็บสีม่วงสวยงาม
+- มีพื้นที่ลากไฟล์
+
+### 2. ทดสอบอัพโหลด
+- เลือกไฟล์ PDF (ทดสอบด้วยไฟล์เล็กๆ ก่อน)
+- คลิก "อัพโหลดและประมวลผล"
+- รอ 1-3 นาที
+- ควรเห็นหน้าผลลัพธ์พร้อมปุ่มดาวน์โหลด
+
+### 3. ดาวน์โหลด ZIP
+- คลิก "ดาวน์โหลดไฟล์ ZIP"
+- แตกไฟล์ ZIP ออกมา
+- ตรวจสอบว่าไฟล์ถูกแยกและรวมตาม SKU ถูกต้อง
+
+---
+
+## 🔧 แก้ไขปัญหา
+
+### ❌ **Build Failed**
+```
+Error: ModuleNotFoundError: No module named 'flask'
+```
+**แก้:** ตรวจสอบว่าไฟล์ `requirements.txt` ถูกต้อง
+
+### ❌ **Application Error**
+```
+Error R10 (Boot timeout)
+```
+**แก้:** ตรวจสอบ Start Command:
+```
+gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1
+```
+
+### ❌ **Cold Start ช้า**
+- ปกติของ Free Plan
+- ถ้าไม่มีคนใช้ 15 นาที service จะหยุด
+- เริ่มใหม่ใช้เวลา 30-60 วินาที
+
+### ❌ **Out of Memory**
+```
+Error: Process ran out of memory
