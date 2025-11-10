@@ -3,81 +3,421 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Processor - Order & SKU Consolidation</title>
+    <title>PDF Order Processor - Advanced</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
             max-width: 800px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
             background: white;
+            border-radius: 15px;
             padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
         }
+        
         h1 {
+            text-align: center;
             color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
             text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
         }
-        .upload-form {
-            border: 2px dashed #007bff;
-            padding: 40px;
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 50px 30px;
             text-align: center;
-            border-radius: 10px;
-            margin: 20px 0;
+            margin: 30px 0;
+            background: #f8f9ff;
+            transition: all 0.3s ease;
         }
-        input[type="file"] {
-            margin: 20px 0;
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: translateY(-2px);
         }
-        input[type="submit"] {
-            background: #007bff;
+        
+        .upload-area.highlight {
+            border-color: #28a745;
+            background: #f0fff4;
+        }
+        
+        .file-input {
+            width: 100%;
+            margin: 20px 0;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .file-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 12px 30px;
             border: none;
-            border-radius: 5px;
+            padding: 15px 40px;
+            border-radius: 25px;
             cursor: pointer;
             font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
         }
-        input[type="submit"]:hover {
-            background: #0056b3;
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
-        .info {
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .info-panel {
             background: #e7f3ff;
-            padding: 15px;
-            border-radius: 5px;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 25px 0;
+        }
+        
+        .progress-container {
+            display: none;
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        .progress-text {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .result-container {
+            display: none;
+            background: #f0fff4;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        
+        .features {
+            list-style: none;
             margin: 20px 0;
+        }
+        
+        .features li {
+            padding: 8px 0;
+            color: #555;
+            text-align: left;
+        }
+        
+        .features li:before {
+            content: "✅ ";
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            display: inline-block;
+            font-weight: 600;
+            margin: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+        }
+        
+        .error-container {
+            display: none;
+            background: #fff5f5;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 25px 0;
+            text-align: center;
+            border-left: 4px solid #e53e3e;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📄 PDF Order & SKU Processor</h1>
+        <h1>📄 Advanced PDF Order Processor</h1>
+        <div class="subtitle">Process large PDFs (200+ pages) with intelligent Order ID & SKU extraction</div>
         
-        <div class="info">
-            <strong>Supported PDFs:</strong> Order documents with Order ID and SKU information<br>
-            <strong>Processing:</strong> Automatically groups pages by Order ID and consolidates by primary SKU
+        <div class="info-panel">
+            <strong>🚀 Enhanced Features:</strong>
+            <ul class="features">
+                <li>Processes PDFs with 200+ pages efficiently</li>
+                <li>Intelligent Order ID and SKU extraction</li>
+                <li>Automatic deduplication and consolidation</li>
+                <li>Background processing with real-time progress</li>
+                <li>Memory-optimized for reliable operation</li>
+                <li>Download consolidated PDFs by primary SKU</li>
+            </ul>
         </div>
 
-        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
-            <h3>Upload PDF Files</h3>
-            <input type="file" name="pdf_files" accept=".pdf" multiple required>
-            <br>
-            <input type="submit" value="Upload and Process">
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="upload-area" id="uploadArea">
+                <h3>📤 Upload PDF Order Documents</h3>
+                <input type="file" name="file" accept=".pdf" required class="file-input" id="fileInput">
+                <button type="submit" class="btn" id="submitBtn">Start Processing</button>
+            </div>
         </form>
 
-        <div class="info">
-            <strong>How it works:</strong>
-            <ol>
-                <li>Upload one or multiple PDF files</li>
-                <li>System extracts Order IDs and SKUs from each page</li>
-                <li>Groups pages by Order ID + SKU combination</li>
-                <li>Consolidates all pages for each primary SKU</li>
-                <li>Provides downloadable ZIP with consolidated PDFs</li>
-            </ol>
+        <div class="progress-container" id="progressContainer">
+            <h3>🔄 Processing Your PDF</h3>
+            <div class="progress-text" id="progressText">Initializing...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-number" id="progressPercent">0%</div>
+                    <div class="stat-label">Progress</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="statusText">-</div>
+                    <div class="stat-label">Status</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="result-container" id="resultContainer">
+            <h3>✅ Processing Complete!</h3>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-number" id="fileCount">0</div>
+                    <div class="stat-label">Files Created</div>
+                </div>
+            </div>
+            <a href="#" class="download-btn" id="downloadLink">📥 Download Consolidated PDFs</a>
+            <br>
+            <button class="btn" onclick="location.reload()" style="background: #6c757d;">🔄 Process Another File</button>
+        </div>
+
+        <div class="error-container" id="errorContainer">
+            <h3>❌ Processing Error</h3>
+            <p id="errorMessage">An error occurred during processing.</p>
+            <button class="btn" onclick="location.reload()">🔄 Try Again</button>
         </div>
     </div>
+
+    <script>
+        let currentJobId = null;
+        let pollInterval = null;
+
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            const submitBtn = document.getElementById('submitBtn');
+            const uploadArea = document.getElementById('uploadArea');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            if (!fileInput.files.length) {
+                alert('Please select a PDF file');
+                return;
+            }
+
+            // UI updates
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+            uploadArea.classList.add('highlight');
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Upload failed');
+                }
+
+                const data = await response.json();
+                currentJobId = data.job_id;
+                
+                // Show progress
+                progressContainer.style.display = 'block';
+                uploadArea.style.display = 'none';
+                
+                // Start polling
+                startPolling();
+                
+            } catch (error) {
+                showError('Upload failed: ' + error.message);
+                resetUI();
+            }
+        });
+
+        function startPolling() {
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${currentJobId}`);
+                    const data = await response.json();
+                    
+                    updateProgress(data);
+                    
+                    if (data.status === 'done' || data.status === 'error') {
+                        clearInterval(pollInterval);
+                        
+                        if (data.status === 'done') {
+                            showResult(data);
+                        } else {
+                            showError(data.error || 'Processing failed');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 2000);
+        }
+
+        function updateProgress(data) {
+            const progressFill = document.getElementById('progressFill');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressText = document.getElementById('progressText');
+            const statusText = document.getElementById('statusText');
+            
+            progressFill.style.width = data.progress + '%';
+            progressPercent.textContent = data.progress + '%';
+            progressText.textContent = data.message;
+            statusText.textContent = data.status;
+        }
+
+        function showResult(data) {
+            const resultContainer = document.getElementById('resultContainer');
+            const fileCount = document.getElementById('fileCount');
+            const downloadLink = document.getElementById('downloadLink');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            fileCount.textContent = data.files.length;
+            downloadLink.href = data.zip;
+            
+            progressContainer.style.display = 'none';
+            resultContainer.style.display = 'block';
+        }
+
+        function showError(message) {
+            const errorContainer = document.getElementById('errorContainer');
+            const errorMessage = document.getElementById('errorMessage');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            errorMessage.textContent = message;
+            progressContainer.style.display = 'none';
+            errorContainer.style.display = 'block';
+        }
+
+        function resetUI() {
+            const submitBtn = document.getElementById('submitBtn');
+            const uploadArea = document.getElementById('uploadArea');
+            
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Start Processing';
+            uploadArea.classList.remove('highlight');
+        }
+
+        // Drag and drop support
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('highlight');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('highlight');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('highlight');
+            
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+            }
+        });
+    </script>
 </body>
 </html>
