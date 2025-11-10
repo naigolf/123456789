@@ -8,8 +8,82 @@ Pillow==10.1.0
 
 ---
 
-## การเพิ่มประสิทธิภาพเพิ่มเติม
+## 3️⃣ `.gitignore`
+```
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-### 1. เพิ่มไฟล์ `.python-version`
+# Flask
+instance/
+.webassets-cache
+
+# Folders
+uploads/
+sorted/
+consolidated_by_sku/
+zipped_archives/
+pdf_uploads/
+pdf_sorted/
+pdf_consolidated/
+pdf_zipped/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+```
+
+---
+
+## 4️⃣ `.python-version`
 ```
 3.11
+```
+
+---
+
+## 5️⃣ `runtime.txt`
+```
+python-3.11.0
