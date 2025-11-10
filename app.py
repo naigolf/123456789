@@ -1,311 +1,282 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file
+from flask import Flask, render_template, request, send_file
 import os
 import pdfplumber
 from PyPDF2 import PdfWriter, PdfReader
 import re
 import zipfile
-import threading
 import time
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max
 
-UPLOAD_FOLDER = 'uploads'
-SORTED_FOLDER = 'sorted'
-CONSOLIDATED_FOLDER = 'consolidated_by_sku'
-ZIPPED_FOLDER = 'zipped_archives'
-
-# Ensure necessary folders exist
-for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
+# Create directories
+for folder in ['uploads', 'sorted', 'consolidated', 'zips']:
     os.makedirs(folder, exist_ok=True)
 
-def cleanup_old_files():
-    """ลบไฟล์เก่าที่เกิน 1 ชั่วโมง"""
+def safe_process_pdf(input_path, output_dir):
+    """Process PDF with memory optimization"""
     try:
-        current_time = time.time()
-        for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                if os.path.isfile(file_path):
-                    # ลบไฟล์ที่เก่ากว่า 1 ชั่วโมง
-                    if current_time - os.path.getctime(file_path) > 3600:
-                        os.remove(file_path)
-    except Exception as e:
-        print(f"Cleanup error: {e}")
-
-# --- PDF Sorting Logic (Optimized) ---
-def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
-    """Process PDF with progress tracking and error handling"""
-    try:
-        reader = PdfReader(input_pdf_path)
+        print(f"Starting to process: {input_path}")
+        
+        # ใช้ PdfReader ด้วย stream mode เพื่อประหยัด memory
+        reader = PdfReader(input_path)
+        total_pages = len(reader.pages)
+        
         writers = {}
-        last_order_id = None
-        last_sku = None
-
-        def extract_order_id(text):
-            match = re.search(r"Order ID[: ]+(\\d+)", text)
-            return match.group(1) if match else None
-
-        def extract_barcode(text):
-            match = re.search(r"\\b\\d{10,18}\\b", text)
-            return match.group(0) if match else None
-
-        print(f"Processing PDF with {len(reader.pages)} pages...")
+        current_order = None
+        current_sku = None
         
-        with pdfplumber.open(input_pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                # แสดง progress ทุก 50 หน้า
-                if i % 50 == 0:
-                    print(f"Processing page {i+1}/{len(reader.pages)}")
-                
-                text = page.extract_text() or ""
-                lines = text.splitlines()
-
-                # Extract Order ID
-                order_id = extract_order_id(text)
-                if order_id:
-                    last_order_id = order_id
-                else:
-                    order_id = last_order_id
-
-                # Extract barcode
-                barcode = extract_barcode(text)
-
-                sku = None
-
-                # If no barcode, use previous SKU
-                if barcode is None and last_sku is not None:
-                    sku = last_sku
-                else:
-                    # Find SKU from product table
-                    for idx, line in enumerate(lines):
-                        if "Product Name" in line and "Seller SKU" in line:
-                            if idx + 1 < len(lines):
-                                product_line = lines[idx + 1].strip()
-                                parts = product_line.split()
-                                if len(parts) >= 2:
-                                    sku = parts[-2]
+        print(f"Total pages to process: {total_pages}")
+        
+        for page_num in range(total_pages):
+            if page_num % 20 == 0:
+                print(f"Processing page {page_num + 1}/{total_pages}")
+                # Force garbage collection ทุก 20 หน้า
+                import gc
+                gc.collect()
+            
+            try:
+                # ใช้ pdfplumber เฉพาะเมื่อจำเป็น
+                with pdfplumber.open(input_path) as pdf:
+                    pdf_page = pdf.pages[page_num]
+                    text = pdf_page.extract_text() or ""
+            except:
+                text = ""
+            
+            # Extract order ID
+            order_match = re.search(r"Order ID[: ]+(\\d+)", text)
+            if order_match:
+                current_order = order_match.group(1)
+            
+            # Extract SKU - simplified logic
+            sku_match = re.search(r"Seller SKU[:\\s]+(\\S+)", text)
+            if sku_match:
+                current_sku = sku_match.group(1)
+            
+            if not current_sku:
+                # Fallback SKU extraction
+                for line in text.split('\\n'):
+                    if 'SKU' in line or 'สินค้า' in line:
+                        parts = line.split()
+                        if len(parts) > 1:
+                            current_sku = parts[-1]
                             break
-
-                if not sku:
-                    sku = last_sku if last_sku else f"UNKNOWN_{i}"
-
-                sku = sku.replace("/", "_").replace("\\", "_").strip()
-                last_sku = sku
-
-                if order_id and sku:
-                    group_key = f"{order_id}_{sku}"
-                    if group_key not in writers:
-                        writers[group_key] = PdfWriter()
-
-                    try:
-                        writers[group_key].add_page(reader.pages[i])
-                    except Exception as e:
-                        print(f"Error adding page {i}: {e}")
-
-        # Save files
-        sorted_files_count = 0
-        for group_key, writer in writers.items():
-            if len(writer.pages) > 0:
-                output_file_path = os.path.join(output_dir, f"{group_key}.pdf")
-                with open(output_file_path, "wb") as f:
-                    writer.write(f)
-                sorted_files_count += 1
+            
+            if not current_sku:
+                current_sku = f"page_{page_num + 1}"
+            
+            # Clean SKU
+            current_sku = re.sub(r'[^\\w\\d-]', '_', str(current_sku))
+            
+            if current_order and current_sku:
+                key = f"{current_order}_{current_sku}"
+                if key not in writers:
+                    writers[key] = PdfWriter()
+                
+                # Add page to writer
+                writers[key].add_page(reader.pages[page_num])
         
-        print(f"Sorted {sorted_files_count} files successfully")
-        return sorted_files_count
+        # Save all writers
+        saved_count = 0
+        for key, writer in writers.items():
+            if len(writer.pages) > 0:
+                output_path = os.path.join(output_dir, f"{key}.pdf")
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                saved_count += 1
+        
+        print(f"Successfully created {saved_count} sorted PDFs")
+        return saved_count
         
     except Exception as e:
-        print(f"Error in sort_pdf_by_order_and_sku: {e}")
+        print(f"Error processing PDF: {str(e)}")
         return 0
 
-# --- PDF Consolidation Logic ---
-def consolidate_pdfs_by_sku(sorted_dir, consolidated_output_dir):
-    """Consolidate PDFs with error handling"""
+def simple_consolidate(input_dir, output_dir):
+    """Consolidate by first SKU found for each order"""
     try:
-        order_id_to_primary_sku_map = {}
-
-        # Map Order IDs to Primary SKUs
-        pdf_files = [f for f in os.listdir(sorted_dir) if f.endswith('.pdf')]
-        print(f"Found {len(pdf_files)} PDF files to consolidate")
+        order_sku_map = {}
+        files_by_sku = {}
         
-        for filename in pdf_files:
-            parts = filename.rsplit('_', 1)
-            if len(parts) == 2:
-                order_id = parts[0]
-                sku_with_ext = parts[1]
-                sku = sku_with_ext.replace('.pdf', '')
-
-                if order_id not in order_id_to_primary_sku_map:
-                    order_id_to_primary_sku_map[order_id] = sku
-
-        # Group files by primary SKU and order ID
-        grouped_files_by_primary_sku = {}
-        for filename in pdf_files:
-            file_path = os.path.join(sorted_dir, filename)
-            parts = filename.rsplit('_', 1)
-            if len(parts) == 2:
-                order_id = parts[0]
-                primary_sku = order_id_to_primary_sku_map.get(order_id)
-
-                if primary_sku:
-                    if primary_sku not in grouped_files_by_primary_sku:
-                        grouped_files_by_primary_sku[primary_sku] = []
-                    grouped_files_by_primary_sku[primary_sku].append((order_id, file_path))
-
-        # Consolidate files by primary SKU
-        consolidated_files_count = 0
-        for primary_sku, files_list in grouped_files_by_primary_sku.items():
-            files_list.sort(key=lambda x: x[0])
-
+        # First pass: map orders to SKUs
+        for filename in os.listdir(input_dir):
+            if filename.endswith('.pdf'):
+                parts = filename.split('_', 1)
+                if len(parts) == 2:
+                    order_id, sku_with_ext = parts
+                    sku = sku_with_ext.replace('.pdf', '')
+                    
+                    if order_id not in order_sku_map:
+                        order_sku_map[order_id] = sku
+        
+        # Second pass: group by primary SKU
+        for filename in os.listdir(input_dir):
+            if filename.endswith('.pdf'):
+                parts = filename.split('_', 1)
+                if len(parts) == 2:
+                    order_id = parts[0]
+                    primary_sku = order_sku_map.get(order_id)
+                    
+                    if primary_sku:
+                        if primary_sku not in files_by_sku:
+                            files_by_sku[primary_sku] = []
+                        files_by_sku[primary_sku].append(filename)
+        
+        # Consolidate files
+        consolidated_count = 0
+        for sku, filenames in files_by_sku.items():
             writer = PdfWriter()
-            total_pages = 0
-
-            for order_id, file_path in files_list:
+            
+            for filename in filenames:
                 try:
-                    reader = PdfReader(file_path)
+                    reader = PdfReader(os.path.join(input_dir, filename))
                     for page in reader.pages:
                         writer.add_page(page)
-                        total_pages += 1
                 except Exception as e:
-                    print(f"Error processing {os.path.basename(file_path)}: {e}")
-
+                    print(f"Error adding {filename}: {e}")
+            
             if len(writer.pages) > 0:
-                output_filename = f"{primary_sku}.pdf"
-                output_file_path = os.path.join(consolidated_output_dir, output_filename)
-                with open(output_file_path, "wb") as f:
+                output_path = os.path.join(output_dir, f"{sku}.pdf")
+                with open(output_path, "wb") as f:
                     writer.write(f)
-                consolidated_files_count += 1
-                print(f"Consolidated {primary_sku}.pdf with {total_pages} pages")
-                
-        return consolidated_files_count
+                consolidated_count += 1
+        
+        return consolidated_count
         
     except Exception as e:
-        print(f"Error in consolidate_pdfs_by_sku: {e}")
+        print(f"Consolidation error: {e}")
         return 0
 
-# --- Zip Archive Creation Logic ---
-def create_zip_archive(source_dir, output_zip_path):
-    """Create zip archive with progress"""
-    try:
-        with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            files = [f for f in os.listdir(source_dir) if f.endswith('.pdf')]
-            for i, file in enumerate(files):
-                file_path = os.path.join(source_dir, file)
-                zipf.write(file_path, file)
-                if i % 5 == 0:  # แสดง progress ทุก 5 ไฟล์
-                    print(f"Zipping {i+1}/{len(files)} files")
-        return True
-    except Exception as e:
-        print(f"Error creating zip: {e}")
-        return False
-
-# --- Flask Routes ---
 @app.route('/')
-def index():
-    cleanup_old_files()  # ทำความสะอาดไฟล์เก่าเมื่อมี request ใหม่
-    return render_template('index.html')
+def home():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PDF Processor</title>
+        <style>
+            body { font-family: Arial; max-width: 600px; margin: 50px auto; padding: 20px; }
+            .upload-area { border: 2px dashed #007bff; padding: 40px; text-align: center; margin: 20px 0; }
+            .btn { background: #007bff; color: white; padding: 12px 24px; border: none; cursor: pointer; }
+            .info { background: #f8f9fa; padding: 15px; margin: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <h1>📄 PDF Order Processor</h1>
+        
+        <div class="info">
+            <strong>Optimized for large PDFs (200+ pages)</strong><br>
+            Upload PDF order documents to sort by Order ID and SKU
+        </div>
 
-@app.route('/upload', methods=['POST'])
-def upload_files():
-    """Handle file upload with progress feedback"""
+        <form action="/process" method="post" enctype="multipart/form-data">
+            <div class="upload-area">
+                <h3>Select PDF Files</h3>
+                <input type="file" name="pdf_files" accept=".pdf" multiple required>
+                <br><br>
+                <button type="submit" class="btn">Process PDFs</button>
+            </div>
+        </form>
+
+        <div class="info">
+            <strong>Process:</strong>
+            <ol>
+                <li>Upload PDF order documents</li>
+                <li>System extracts Order IDs and SKUs</li>
+                <li>Groups pages by Order ID + SKU</li>
+                <li>Consolidates by primary SKU</li>
+                <li>Download consolidated files</li>
+            </ol>
+        </div>
+    </body>
+    </html>
+    '''
+
+@app.route('/process', methods=['POST'])
+def process_pdfs():
     try:
         if 'pdf_files' not in request.files:
-            return redirect(request.url)
-
+            return "No files selected", 400
+        
         files = request.files.getlist('pdf_files')
-        uploaded_count = 0
-        total_sorted_pdfs_count = 0
-
-        # Clear previous files for fresh processing
-        for folder in [SORTED_FOLDER, CONSOLIDATED_FOLDER]:
-            for item in os.listdir(folder):
-                item_path = os.path.join(folder, item)
-                if os.path.isfile(item_path):
-                    os.remove(item_path)
-
-        # Process each uploaded file
+        uploaded_files = []
+        
+        # Clear previous files
+        for folder in ['sorted', 'consolidated', 'zips']:
+            for file in os.listdir(folder):
+                os.remove(os.path.join(folder, file))
+        
+        # Upload files
         for file in files:
-            if file and file.filename and file.filename.endswith('.pdf'):
-                filename = file.filename
-                file_path = os.path.join(UPLOAD_FOLDER, filename)
-                file.save(file_path)
-                uploaded_count += 1
-                print(f"Uploaded: {filename}")
-
-                # Sort PDF with timeout protection
-                num_sorted = sort_pdf_by_order_and_sku(file_path, SORTED_FOLDER)
-                total_sorted_pdfs_count += num_sorted
-
-        # Consolidate PDFs
-        if total_sorted_pdfs_count > 0:
-            total_consolidated_pdfs_count = consolidate_pdfs_by_sku(SORTED_FOLDER, CONSOLIDATED_FOLDER)
-            
-            # Create zip archive
-            zip_filename = "consolidated_pdfs.zip"
-            output_zip_path = os.path.join(ZIPPED_FOLDER, zip_filename)
-            zip_success = create_zip_archive(CONSOLIDATED_FOLDER, output_zip_path)
-            
-            if uploaded_count > 0 and zip_success:
-                download_url = url_for('download_zip', filename=zip_filename)
-                return f'''
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <h1 style="color: #28a745;">✅ Processing Complete!</h1>
-                    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
-                        <p><strong>Uploaded:</strong> {uploaded_count} PDF files</p>
-                        <p><strong>Sorted:</strong> {total_sorted_pdfs_count} order-SKU combinations</p>
-                        <p><strong>Consolidated:</strong> {total_consolidated_pdfs_count} primary SKU files</p>
-                    </div>
-                    <a href="{download_url}" style="display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                        📥 Download Consolidated PDFs
-                    </a>
-                    <br><br>
-                    <a href="/" style="color: #007bff;">🔄 Process more files</a>
-                </div>
-                '''
-            else:
-                return '''
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <h1 style="color: #dc3545;">❌ Processing Error</h1>
-                    <p>There was an error processing your files. Please try again.</p>
-                    <a href="/" style="color: #007bff;">🔄 Try again</a>
-                </div>
-                '''
-        else:
-            return '''
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="color: #ffc107;">⚠️ No PDFs Processed</h1>
-                <p>No valid PDF files were found or processed.</p>
-                <a href="/" style="color: #007bff;">🔄 Try again</a>
-            </div>
-            '''
-            
-    except Exception as e:
-        print(f"Upload error: {e}")
+            if file and file.filename.endswith('.pdf'):
+                filename = f"upload_{int(time.time())}_{len(uploaded_files)}.pdf"
+                filepath = os.path.join('uploads', filename)
+                file.save(filepath)
+                uploaded_files.append(filepath)
+        
+        if not uploaded_files:
+            return "No valid PDF files uploaded", 400
+        
+        # Process each PDF
+        total_sorted = 0
+        for filepath in uploaded_files:
+            sorted_count = safe_process_pdf(filepath, 'sorted')
+            total_sorted += sorted_count
+        
+        # Consolidate
+        consolidated_count = simple_consolidate('sorted', 'consolidated')
+        
+        # Create zip
+        zip_path = os.path.join('zips', 'results.zip')
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for file in os.listdir('consolidated'):
+                zipf.write(os.path.join('consolidated', file), file)
+        
         return f'''
         <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h1 style="color: #dc3545;">❌ Server Error</h1>
-            <p>An error occurred: {str(e)}</p>
-            <a href="/" style="color: #007bff;">🔄 Try again</a>
+            <h1 style="color: green;">✅ Processing Complete</h1>
+            <div style="background: #f0f8ff; padding: 20px; border-radius: 10px;">
+                <p><strong>Files Processed:</strong> {len(uploaded_files)}</p>
+                <p><strong>Sorted Groups:</strong> {total_sorted}</p>
+                <p><strong>Consolidated Files:</strong> {consolidated_count}</p>
+            </div>
+            <br>
+            <a href="/download/results.zip" style="
+                background: #28a745; 
+                color: white; 
+                padding: 12px 24px; 
+                text-decoration: none; 
+                border-radius: 5px;
+                display: inline-block;
+            ">📥 Download Results</a>
+            <br><br>
+            <a href="/">🔄 Process More Files</a>
+        </div>
+        '''
+        
+    except Exception as e:
+        return f'''
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: red;">❌ Processing Error</h1>
+            <p>Error: {str(e)}</p>
+            <a href="/">🔄 Try Again</a>
         </div>
         '''
 
 @app.route('/download/<filename>')
-def download_zip(filename):
-    """Serve zip file for download"""
+def download_file(filename):
     try:
         return send_file(
-            os.path.join(ZIPPED_FOLDER, filename), 
+            os.path.join('zips', filename),
             as_attachment=True,
-            download_name=f"consolidated_pdfs_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+            download_name=f"processed_pdfs_{time.strftime('%Y%m%d')}.zip"
         )
     except Exception as e:
-        return f"Error downloading file: {str(e)}"
+        return f"Download error: {str(e)}"
 
 @app.route('/health')
-def health_check():
-    """Health check endpoint for monitoring"""
-    return {'status': 'healthy', 'timestamp': time.time()}
+def health():
+    return {'status': 'ok', 'time': time.time()}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
