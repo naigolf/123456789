@@ -1,7 +1,15 @@
 from flask import Flask, render_template, request, send_file, jsonify, url_for
-import os, re, zipfile, pdfplumber, threading, uuid, traceback, time, gc
+import os, re, zipfile, threading, uuid, traceback, time, gc
 from PyPDF2 import PdfWriter, PdfReader
 from werkzeug.utils import secure_filename
+
+# Try to import pdfplumber with fallback
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    print("Warning: pdfplumber not available. Using fallback text extraction.")
+    PDFPLUMBER_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -40,6 +48,23 @@ def extract_sku_from_product_table(lines):
                                 return parts[i]
     return None
 
+def extract_text_from_pdf_page(pdf_path, page_num):
+    """Extract text from PDF page with fallback if pdfplumber is not available"""
+    try:
+        if PDFPLUMBER_AVAILABLE:
+            with pdfplumber.open(pdf_path) as pdf:
+                page = pdf.pages[page_num]
+                return page.extract_text() or ""
+        else:
+            # Fallback using PyPDF2
+            with open(pdf_path, 'rb') as file:
+                reader = PdfReader(file)
+                if page_num < len(reader.pages):
+                    return reader.pages[page_num].extract_text() or ""
+    except Exception as e:
+        print(f"Error extracting text from page {page_num}: {e}")
+    return ""
+
 def cleanup_old_jobs():
     """Clean up jobs older than 1 hour to prevent memory leak"""
     try:
@@ -51,6 +76,13 @@ def cleanup_old_jobs():
                 jobs_to_delete.append(job_id)
         
         for job_id in jobs_to_delete:
+            # Clean up job directories
+            for base_dir in [BASE_SORTED, BASE_CONSOLIDATED, BASE_ZIPPED]:
+                job_dir = os.path.join(base_dir, job_id)
+                if os.path.exists(job_dir):
+                    import shutil
+                    shutil.rmtree(job_dir)
+            
             del jobs[job_id]
             print(f"Cleaned up old job: {job_id}")
             
@@ -103,15 +135,20 @@ def process_pdf_job(job_id, uploaded_path, original_filename):
 
         # Count pages
         jobs[job_id]["message"] = "Counting pages..."
-        with pdfplumber.open(uploaded_path) as pdf_counter:
-            total_pages = len(pdf_counter.pages) if pdf_counter.pages else 0
+        if PDFPLUMBER_AVAILABLE:
+            with pdfplumber.open(uploaded_path) as pdf_counter:
+                total_pages = len(pdf_counter.pages) if pdf_counter.pages else 0
+        else:
+            # Fallback using PyPDF2
+            with open(uploaded_path, 'rb') as file:
+                reader_temp = PdfReader(file)
+                total_pages = len(reader_temp.pages)
         
         print(f"[{job_id}] Total pages: {total_pages}")
 
         # Open PDF once for reading
         jobs[job_id]["message"] = "Loading PDF..."
         reader = PdfReader(uploaded_path)
-        pdf_plumber = pdfplumber.open(uploaded_path)
         
         # Track page info without keeping writers in memory
         page_info = []
@@ -121,10 +158,9 @@ def process_pdf_job(job_id, uploaded_path, original_filename):
         
         for i in range(total_pages):
             try:
-                # Extract text using pdfplumber
-                page = pdf_plumber.pages[i]
-                text = page.extract_text() or ""
-                lines = text.splitlines()
+                # Extract text using appropriate method
+                text = extract_text_from_pdf_page(uploaded_path, i)
+                lines = text.splitlines() if text else []
                 
                 # Extract order ID
                 order_id = extract_order_id(text)
@@ -177,10 +213,6 @@ def process_pdf_job(job_id, uploaded_path, original_filename):
                 print(f"Error analyzing page {i}: {e}")
                 continue
 
-        # Close pdfplumber to free memory
-        pdf_plumber.close()
-        pdf_plumber = None
-        
         # Group pages by key and remove duplicates
         jobs[job_id]["message"] = "Grouping pages..."
         grouped_pages = {}
