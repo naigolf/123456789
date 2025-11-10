@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: pdf-order-extractor
+    name: pdf-order-processor
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
