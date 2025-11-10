@@ -6,10 +6,13 @@ import re
 import zipfile
 import gc
 import tempfile
+import time
+from threading import Thread
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # จำกัด 50MB
 
-# ใช้ temp folder ของ system แทนการสร้างเอง
+# ใช้ temp folder ของ system
 TEMP_DIR = tempfile.gettempdir()
 UPLOAD_FOLDER = os.path.join(TEMP_DIR, 'pdf_uploads')
 SORTED_FOLDER = os.path.join(TEMP_DIR, 'pdf_sorted')
@@ -20,22 +23,23 @@ ZIPPED_FOLDER = os.path.join(TEMP_DIR, 'pdf_zipped')
 for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
-# ฟังก์ชันล้างไฟล์และ memory
 def clear_folder(folder_path):
     """ลบไฟล์ทั้งหมดในโฟลเดอร์และบังคับ garbage collection"""
     try:
         for item in os.listdir(folder_path):
             item_path = os.path.join(folder_path, item)
             if os.path.isfile(item_path):
-                os.remove(item_path)
-        gc.collect()  # บังคับให้ Python คืน memory
+                try:
+                    os.remove(item_path)
+                except:
+                    pass
+        gc.collect()
     except Exception as e:
         print(f"Error clearing folder {folder_path}: {e}")
 
-# ฟังก์ชันแยก PDF แบบประหยัด memory
 def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
     """
-    ประมวลผล PDF ทีละหน้า เพื่อลดการใช้ RAM
+    แยก PDF ทีละหน้าเพื่อประหยัด RAM
     """
     writers = {}
     last_order_id = None
@@ -50,7 +54,6 @@ def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
         return match.group(0) if match else None
 
     def extract_sku_from_lines(lines):
-        """แยก SKU จากบรรทัดข้อความ"""
         for idx, line in enumerate(lines):
             if "Product Name" in line and "Seller SKU" in line:
                 if idx + 1 < len(lines):
@@ -61,11 +64,9 @@ def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
         return None
 
     try:
-        # ใช้ pdfplumber เพื่ออ่านข้อความ
         with pdfplumber.open(input_pdf_path) as pdf:
             total_pages = len(pdf.pages)
             
-            # ประมวลผลทีละหน้า
             for i in range(total_pages):
                 page = pdf.pages[i]
                 text = page.extract_text() or ""
@@ -98,7 +99,7 @@ def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
                     if group_key not in writers:
                         writers[group_key] = PdfWriter()
                     
-                    # อ่านหน้าจาก PyPDF2 Reader
+                    # อ่านหน้าจาก PyPDF2
                     with open(input_pdf_path, 'rb') as f:
                         reader = PdfReader(f)
                         writers[group_key].add_page(reader.pages[i])
@@ -116,7 +117,6 @@ def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
                     writer.write(f)
                 sorted_count += 1
         
-        # ล้าง writers และ memory
         writers.clear()
         gc.collect()
         
@@ -127,10 +127,9 @@ def sort_pdf_by_order_and_sku(input_pdf_path, output_dir):
         gc.collect()
         return 0
 
-# ฟังก์ชันรวม PDF แบบประหยัด memory
 def consolidate_pdfs_by_sku(sorted_dir, consolidated_output_dir):
     """
-    รวม PDF ทีละไฟล์ เพื่อลดการใช้ RAM
+    รวม PDF ทีละไฟล์เพื่อประหยัด RAM
     """
     order_id_to_primary_sku_map = {}
 
@@ -165,7 +164,6 @@ def consolidate_pdfs_by_sku(sorted_dir, consolidated_output_dir):
         files_list.sort(key=lambda x: x[0])
         writer = PdfWriter()
 
-        # เพิ่มหน้าทีละไฟล์
         for order_id, file_path in files_list:
             try:
                 with open(file_path, 'rb') as f:
@@ -180,23 +178,20 @@ def consolidate_pdfs_by_sku(sorted_dir, consolidated_output_dir):
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
 
-        # บันทึกไฟล์ที่รวมแล้ว
         if len(writer.pages) > 0:
             output_path = os.path.join(consolidated_output_dir, f"{primary_sku}.pdf")
             with open(output_path, "wb") as f:
                 writer.write(f)
             consolidated_count += 1
         
-        # ล้าง writer และ memory หลังแต่ละ SKU
         del writer
         gc.collect()
     
     return consolidated_count
 
-# ฟังก์ชันสร้าง ZIP แบบ streaming
 def create_zip_archive(source_dir, output_zip_path):
     """
-    สร้าง ZIP โดยไม่โหลดไฟล์ทั้งหมดเข้า memory
+    สร้าง ZIP แบบ streaming
     """
     try:
         with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -209,6 +204,36 @@ def create_zip_archive(source_dir, output_zip_path):
         print(f"Error creating zip: {e}")
         return None
 
+def cleanup_old_files():
+    """ลบไฟล์เก่ากว่า 30 นาที"""
+    current_time = time.time()
+    max_age = 30 * 60  # 30 minutes
+    
+    for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
+        try:
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                if os.path.isfile(file_path):
+                    file_age = current_time - os.path.getmtime(file_path)
+                    if file_age > max_age:
+                        try:
+                            os.remove(file_path)
+                        except:
+                            pass
+            gc.collect()
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
+def schedule_cleanup():
+    """รัน cleanup ทุก 30 นาที"""
+    while True:
+        time.sleep(1800)  # 30 minutes
+        cleanup_old_files()
+
+# เริ่ม cleanup thread
+cleanup_thread = Thread(target=schedule_cleanup, daemon=True)
+cleanup_thread.start()
+
 # Routes
 @app.route('/')
 def index():
@@ -217,11 +242,14 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_files():
     if 'pdf_files' not in request.files:
-        return '<h1>No files selected</h1><p><a href="/">Try again</a></p>'
+        return '''
+        <h1>❌ ไม่พบไฟล์</h1>
+        <p><a href="/">กลับไปหน้าแรก</a></p>
+        '''
 
     files = request.files.getlist('pdf_files')
     
-    # ล้างโฟลเดอร์เก่าทั้งหมด
+    # ล้างโฟลเดอร์เก่า
     for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
         clear_folder(folder)
 
@@ -235,22 +263,24 @@ def upload_files():
                 filename = file.filename
                 file_path = os.path.join(UPLOAD_FOLDER, filename)
                 
-                # บันทึกไฟล์
                 file.save(file_path)
                 uploaded_count += 1
 
-                # แยกไฟล์ทันที
+                # แยกไฟล์
                 num_sorted = sort_pdf_by_order_and_sku(file_path, SORTED_FOLDER)
                 total_sorted += num_sorted
 
-                # ลบไฟล์ต้นฉบับทันทีเพื่อคืน memory
-                os.remove(file_path)
+                # ลบไฟล์ต้นฉบับ
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
                 gc.collect()
 
         # รวมไฟล์
         total_consolidated = consolidate_pdfs_by_sku(SORTED_FOLDER, CONSOLIDATED_FOLDER)
 
-        # ลบไฟล์ sorted เพื่อคืน disk space
+        # ลบไฟล์ sorted
         clear_folder(SORTED_FOLDER)
 
         # สร้าง ZIP
@@ -261,66 +291,152 @@ def upload_files():
         if zip_path and uploaded_count > 0:
             download_url = url_for('download_zip', filename=zip_filename)
             
-            # ลบไฟล์ consolidated เพื่อคืน disk space (เก็บแค่ ZIP)
+            # ลบไฟล์ consolidated
             clear_folder(CONSOLIDATED_FOLDER)
             
             return f'''
-            <h1>✅ Successfully uploaded {uploaded_count} files!</h1>
-            <p>📊 Sorted: {total_sorted} PDFs</p>
-            <p>📦 Consolidated: {total_consolidated} PDFs by SKU</p>
-            <p><a href="{download_url}" style="font-size: 20px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;">⬇️ Download ZIP</a></p>
-            <p style="color: red; margin-top: 20px;">⚠️ กรุณาดาวน์โหลดภายใน 10 นาที ไฟล์จะถูกลบอัตโนมัติ</p>
-            <p><a href="/">Upload more files</a></p>
+            <!DOCTYPE html>
+            <html lang="th">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>สำเร็จ!</title>
+                <style>
+                    body {{
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        min-height: 100vh;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        padding: 20px;
+                    }}
+                    .container {{
+                        background: white;
+                        padding: 40px;
+                        border-radius: 20px;
+                        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                        max-width: 600px;
+                        text-align: center;
+                    }}
+                    h1 {{ color: #28a745; margin-bottom: 20px; }}
+                    .stats {{ 
+                        background: #f8f9fa;
+                        padding: 20px;
+                        border-radius: 10px;
+                        margin: 20px 0;
+                    }}
+                    .stats p {{ margin: 10px 0; font-size: 18px; }}
+                    .download-btn {{
+                        display: inline-block;
+                        padding: 15px 30px;
+                        background: linear-gradient(135deg, #28a745, #20c997);
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 10px;
+                        font-size: 20px;
+                        font-weight: 600;
+                        margin: 20px 0;
+                        transition: transform 0.2s;
+                    }}
+                    .download-btn:hover {{ transform: translateY(-2px); }}
+                    .warning {{
+                        color: #dc3545;
+                        margin: 20px 0;
+                        font-weight: 600;
+                    }}
+                    .back-btn {{
+                        display: inline-block;
+                        padding: 10px 20px;
+                        background: #6c757d;
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 5px;
+                        margin-top: 10px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>✅ ประมวลผลสำเร็จ!</h1>
+                    
+                    <div class="stats">
+                        <p>📤 อัพโหลด: <strong>{uploaded_count}</strong> ไฟล์</p>
+                        <p>📊 แยกไฟล์: <strong>{total_sorted}</strong> PDFs</p>
+                        <p>📦 รวมตาม SKU: <strong>{total_consolidated}</strong> PDFs</p>
+                    </div>
+                    
+                    <a href="{download_url}" class="download-btn">
+                        ⬇️ ดาวน์โหลดไฟล์ ZIP
+                    </a>
+                    
+                    <p class="warning">
+                        ⚠️ กรุณาดาวน์โหลดภายใน 10 นาที<br>
+                        ไฟล์จะถูกลบอัตโนมัติเพื่อประหยัดพื้นที่
+                    </p>
+                    
+                    <a href="/" class="back-btn">🔄 อัพโหลดไฟล์ใหม่</a>
+                </div>
+            </body>
+            </html>
             '''
         else:
-            return '<h1>Error processing files</h1><p><a href="/">Try again</a></p>'
+            return '''
+            <h1>❌ เกิดข้อผิดพลาด</h1>
+            <p>ไม่สามารถประมวลผลไฟล์ได้</p>
+            <p><a href="/">ลองใหม่อีกครั้ง</a></p>
+            '''
             
     except Exception as e:
         print(f"Error in upload_files: {e}")
-        # ล้างทุกอย่างในกรณีเกิดข้อผิดพลาด
         for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER]:
             clear_folder(folder)
-        return f'<h1>Error: {str(e)}</h1><p><a href="/">Try again</a></p>'
+        return f'''
+        <h1>❌ เกิดข้อผิดพลาด</h1>
+        <p>Error: {str(e)}</p>
+        <p><a href="/">ลองใหม่อีกครั้ง</a></p>
+        '''
 
 @app.route('/download/<filename>')
 def download_zip(filename):
     try:
         file_path = os.path.join(ZIPPED_FOLDER, filename)
         
-        # ส่งไฟล์และลบทันทีหลัง download
+        if not os.path.exists(file_path):
+            return '''
+            <h1>❌ ไม่พบไฟล์</h1>
+            <p>ไฟล์อาจถูกลบไปแล้ว หรือ link หมดอายุ</p>
+            <p><a href="/">อัพโหลดไฟล์ใหม่</a></p>
+            '''
+        
         response = send_file(file_path, as_attachment=True)
         
-        # ลบไฟล์หลังส่งเสร็จ (ใน background)
+        # ลบไฟล์หลัง download
         @response.call_on_close
         def cleanup():
             try:
-                os.remove(file_path)
+                time.sleep(1)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
                 gc.collect()
             except:
                 pass
         
         return response
     except Exception as e:
-        return f'<h1>File not found</h1><p>กรุณาอัพโหลดไฟล์ใหม่</p><p><a href="/">Go back</a></p>'
+        print(f"Download error: {e}")
+        return '''
+        <h1>❌ ไม่สามารถดาวน์โหลดได้</h1>
+        <p><a href="/">กลับไปหน้าแรก</a></p>
+        '''
 
-# Cleanup task - ลบไฟล์เก่าทุก 30 นาที
-def cleanup_old_files():
-    """ลบไฟล์ที่เก่ากว่า 30 นาที"""
-    import time
-    current_time = time.time()
-    max_age = 30 * 60  # 30 minutes
-    
-    for folder in [UPLOAD_FOLDER, SORTED_FOLDER, CONSOLIDATED_FOLDER, ZIPPED_FOLDER]:
-        try:
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                if os.path.isfile(file_path):
-                    file_age = current_time - os.path.getmtime(file_path)
-                    if file_age > max_age:
-                        os.remove(file_path)
-            gc.collect()
-        except Exception as e:
-            print(f"Cleanup error: {e}")
+@app.errorhandler(413)
+def too_large(e):
+    return '''
+    <h1>❌ ไฟล์ใหญ่เกินไป</h1>
+    <p>กรุณาอัพโหลดไฟล์ที่มีขนาดไม่เกิน 50MB</p>
+    <p><a href="/">ลองใหม่อีกครั้ง</a></p>
+    ''', 413
 
 if __name__ == '__main__':
     # ทำ cleanup ก่อน start
